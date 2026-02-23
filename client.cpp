@@ -164,7 +164,7 @@ static void print_manual_help() {
     msg("- SET <key> <value>");
     msg("- DEL <key>");
     msg("- HELP");
-    msg("- EXIT");
+    msg("- EXIT\n");
 }
 
 static bool parse_manual_line(const std::string &line, std::vector<std::string> &cmd) {
@@ -272,14 +272,14 @@ int main(int argc, char **argv) {
     int fd = connect_to_server();
 
     int32_t err = 0;
-    if (argc >= 2 && strcmp(argv[1], "--manual") == 0) {
-        err = run_manual_mode(fd);
+    if (argc > 2) {
+        err = run_single_request_mode(fd, argc, argv);
     } else {
-        if (argc < 2) {
-            msg("usage: ./client --manual OR ./client <get|set|del> ...");
+        if (argc == 2) {
+            msg("usage: ./client OR ./client <get|set|del> ...");
             goto L_DONE;
         }
-        err = run_single_request_mode(fd, argc, argv);
+        err = run_manual_mode(fd);
     }
 
 L_DONE:
