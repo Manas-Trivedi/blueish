@@ -159,12 +159,12 @@ static std::string to_lower(std::string s) {
 }
 
 static void print_manual_help() {
-    msg("commands:");
-    msg("  GET <key>");
-    msg("  SET <key> <value>");
-    msg("  DEL <key>");
-    msg("  HELP");
-    msg("  EXIT");
+    msg("commands:\n");
+    msg("- GET <key>");
+    msg("- SET <key> <value>");
+    msg("- DEL <key>");
+    msg("- HELP");
+    msg("- EXIT");
 }
 
 static bool parse_manual_line(const std::string &line, std::vector<std::string> &cmd) {
