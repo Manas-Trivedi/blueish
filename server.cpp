@@ -237,6 +237,9 @@ static bool try_one_request(Conn* conn) {
     do_request(cmd, resp);
     make_response(resp, conn->outgoing);
 
+    // consume the processed request frame: 4-byte len header + body
+    buf_consume(conn->incoming, 4 + len);
+
     return true;
 }
 

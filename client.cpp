@@ -10,6 +10,9 @@
 #include <netinet/ip.h>
 #include <string>
 #include <vector>
+#include <iostream>
+#include <sstream>
+#include <cctype>
 
 // =============
 // Utilities
@@ -144,13 +147,67 @@ static int connect_to_server() {
     return fd;
 }
 
-// ==================
-// Client Entry Flow
-// ==================
+// =====================
+// Client Command Modes
+// =====================
 
-int main(int argc, char **argv) {
-    int fd = connect_to_server();
+static std::string to_lower(std::string s) {
+    for (char &ch : s) {
+        ch = (char)std::tolower((unsigned char)ch);
+    }
+    return s;
+}
 
+static void print_manual_help() {
+    msg("commands:");
+    msg("  GET <key>");
+    msg("  SET <key> <value>");
+    msg("  DEL <key>");
+    msg("  HELP");
+    msg("  EXIT");
+}
+
+static bool parse_manual_line(const std::string &line, std::vector<std::string> &cmd) {
+    cmd.clear();
+
+    std::istringstream input(line);
+    std::string token;
+    while (input >> token) {
+        cmd.push_back(token);
+    }
+
+    if (cmd.empty()) {
+        return false;
+    }
+
+    std::string op = to_lower(cmd[0]);
+    if (op == "help" || op == "exit" || op == "quit") {
+        cmd[0] = op;
+        cmd.resize(1);
+        return true;
+    }
+
+    if ((op == "get" || op == "del") && cmd.size() == 2) {
+        cmd[0] = op;
+        return true;
+    }
+
+    if (op == "set" && cmd.size() >= 3) {
+        std::string value = cmd[2];
+        for (size_t i = 3; i < cmd.size(); ++i) {
+            value += " ";
+            value += cmd[i];
+        }
+        cmd[0] = "set";
+        cmd[2] = value;
+        cmd.resize(3);
+        return true;
+    }
+
+    return false;
+}
+
+static int32_t run_single_request_mode(int fd, int argc, char **argv) {
     std::vector<std::string> cmd;
     for (int i = 1; i < argc; ++i) {
         cmd.push_back(argv[i]);
@@ -158,12 +215,71 @@ int main(int argc, char **argv) {
 
     int32_t err = send_req(fd, cmd);
     if (err) {
-        goto L_DONE;
+        return err;
     }
 
-    err = read_res(fd);
-    if (err) {
-        goto L_DONE;
+    return read_res(fd);
+}
+
+static int32_t run_manual_mode(int fd) {
+    msg("manual mode enabled");
+    print_manual_help();
+
+    while (true) {
+        printf("> ");
+        fflush(stdout);
+
+        std::string line;
+        if (!std::getline(std::cin, line)) {
+            msg("stdin closed");
+            return 0;
+        }
+
+        std::vector<std::string> cmd;
+        if (!parse_manual_line(line, cmd)) {
+            msg("invalid command");
+            print_manual_help();
+            continue;
+        }
+
+        if (cmd[0] == "help") {
+            print_manual_help();
+            continue;
+        }
+
+        if (cmd[0] == "exit" || cmd[0] == "quit") {
+            return 0;
+        }
+
+        int32_t err = send_req(fd, cmd);
+        if (err) {
+            msg("write() error");
+            return err;
+        }
+
+        err = read_res(fd);
+        if (err) {
+            return err;
+        }
+    }
+}
+
+// ==================
+// Client Entry Flow
+// ==================
+
+int main(int argc, char **argv) {
+    int fd = connect_to_server();
+
+    int32_t err = 0;
+    if (argc >= 2 && strcmp(argv[1], "--manual") == 0) {
+        err = run_manual_mode(fd);
+    } else {
+        if (argc < 2) {
+            msg("usage: ./client --manual OR ./client <get|set|del> ...");
+            goto L_DONE;
+        }
+        err = run_single_request_mode(fd, argc, argv);
     }
 
 L_DONE:
