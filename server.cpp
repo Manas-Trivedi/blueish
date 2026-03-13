@@ -65,12 +65,62 @@ enum ResponseStatus {
 // Buffer Helpers
 // =================
 
-static void buf_append(std::vector<uint8_t> &buf, const uint8_t *data, size_t len) {
-    buf.insert(buf.end(), data, data + len);
+struct Buffer {
+    uint8_t *buffer_begin;
+    uint8_t *buffer_end;
+    uint8_t *data_begin;
+    uint8_t *data_end;
+};
+
+size_t buf_size(Buffer *buf) {
+    return buf->data_end - buf->data_begin;
 }
 
-static void buf_consume(std::vector<uint8_t> &buf, size_t n) {
-    buf.erase(buf.begin(), buf.begin() + n);
+static void buf_init(struct Buffer *buf, size_t capacity) {
+    uint8_t *mem = (uint8_t *)malloc(capacity);
+    if (!mem) die("malloc");
+    buf->buffer_begin = mem;
+    buf->buffer_end = mem + capacity;
+    buf->data_begin = mem;
+    buf->data_end = mem;
+}
+
+static void buf_append(struct Buffer *buf, const uint8_t *data, size_t len) {
+    // check if enough space lies between data_end and buffer_end
+    if(buf->buffer_end - buf->data_end < len) {
+        //compact the data to buffer_begin if not
+        size_t data_size = buf->data_end - buf->data_begin;
+        memmove(buf->buffer_begin, buf->data_begin, data_size);
+        buf->data_begin = buf->buffer_begin;
+        buf->data_end = buf->buffer_begin + data_size;
+        // check again if still not then reallocate
+        if(buf->buffer_end - buf->data_end < len) {
+            size_t capacity = buf->buffer_end - buf->buffer_begin;
+            size_t new_capacity = capacity * 2;
+            while (new_capacity < data_size + len) {
+                new_capacity *= 2;
+            }
+            uint8_t *new_buf = (uint8_t *)malloc(new_capacity);
+            if (!new_buf) die("malloc");
+            memcpy(new_buf, buf->data_begin, data_size);
+            free(buf->buffer_begin);
+            buf->buffer_begin = new_buf;
+            buf->data_begin = new_buf;
+            buf->data_end = new_buf + data_size;
+            buf->buffer_end = new_buf + new_capacity;
+        }
+    }
+    memcpy(buf->data_end, data, len);
+    buf->data_end += len;
+}
+
+static void buf_consume(struct Buffer *buf, size_t n) {
+    assert(buf->data_begin + n <= buf->data_end);
+    buf->data_begin += n;
+    if (buf->data_begin == buf->data_end) {
+        buf->data_begin = buf->buffer_begin;
+        buf->data_end = buf->buffer_begin;
+    }
 }
 
 // ===========
@@ -133,7 +183,7 @@ struct Response {
     std::vector<uint8_t> data;
 };
 
-static void make_response(const Response &resp, std::vector<uint8_t> &out) {
+static void make_response(const Response &resp, struct Buffer *out) {
     uint32_t resp_len = 4 + (uint32_t)resp.data.size();
     buf_append(out, (const uint8_t *)&resp_len, 4);
     buf_append(out, (const uint8_t *)&resp.status, 4);
@@ -147,7 +197,7 @@ static void make_response(const Response &resp, std::vector<uint8_t> &out) {
 // trivial rn will implement custom in next iteration
 static std::map<std::string, std::string> g_data;
 
-static void do_request(std::vector<std::string> cmd, Response &out) {
+static void do_request(std::vector<std::string> &cmd, Response &out) {
     if(cmd.size() == 2 && cmd[0] == "get") {
         auto it = g_data.find(cmd[1]);
         if(it == g_data.end()) {
@@ -176,8 +226,8 @@ int fd = -1;
     bool want_write = false;
     bool want_close = false;
     // individual buffers for each connection
-    std::vector<uint8_t> incoming;
-    std::vector<uint8_t> outgoing;
+    struct Buffer *incoming;
+    struct Buffer *outgoing;
 };
 
 static Conn* handle_accept(int fd) {
@@ -201,16 +251,22 @@ static Conn* handle_accept(int fd) {
     conn->fd = connfd;
     conn->want_read = true;
 
+    conn->incoming = new Buffer();
+    conn->outgoing = new Buffer();
+
+    buf_init(conn->incoming, 4096);
+    buf_init(conn->outgoing, 4096);
+
     return conn;
 }
 
 static bool try_one_request(Conn* conn) {
-    if(conn->incoming.size() < 4) {
+    if(buf_size(conn->incoming) < 4) {
         return false; // don't even have enough for a header yet
     }
 
     uint32_t len = 0;
-    memcpy(&len, conn->incoming.data(), 4);
+    memcpy(&len, conn->incoming->data_begin, 4);
 
     if(len > k_max_msg) {
         msg("too long");
@@ -218,11 +274,11 @@ static bool try_one_request(Conn* conn) {
         return false;
     }
 
-    if(4 + len > conn->incoming.size()) {
+    if(4 + len > buf_size(conn->incoming)) {
         return false; // full data not arrived yet
     }
 
-    const uint8_t *request = &conn->incoming[4];
+    const uint8_t *request = conn->incoming->data_begin + 4;
 
     // application logic : K-V Store (simple without data structures)
 
@@ -244,8 +300,8 @@ static bool try_one_request(Conn* conn) {
 }
 
 static void handle_write(Conn* conn) {
-    assert(conn->outgoing.size() > 0);
-    ssize_t rv = write(conn->fd, &conn->outgoing[0], conn->outgoing.size());
+    assert(buf_size(conn->outgoing) > 0);
+    ssize_t rv = write(conn->fd, conn->outgoing->data_begin, buf_size(conn->outgoing));
 
     if(rv < 0 && errno == EAGAIN) {
         return;
@@ -259,7 +315,7 @@ static void handle_write(Conn* conn) {
 
     buf_consume(conn->outgoing, (size_t) rv);
 
-    if(conn->outgoing.size() == 0) {
+    if(buf_size(conn->outgoing) == 0) {
         conn->want_read = true;
         conn->want_write = false;
     }
@@ -280,7 +336,7 @@ static void handle_read(Conn* conn) {
     }
 
     if(rv == 0) { //EOF
-        if(conn->incoming.size() == 0) {
+        if(buf_size(conn->incoming) == 0) {
             msg("client closed");
         } else {
             msg("unexpected EOF");
@@ -293,7 +349,7 @@ static void handle_read(Conn* conn) {
 
     while(try_one_request(conn)) {}
 
-    if (conn->outgoing.size() > 0) {    // has a response
+    if (buf_size(conn->outgoing) > 0) {    // has a response
         conn->want_read = false;
         conn->want_write = true;
         return handle_write(conn);
@@ -390,6 +446,10 @@ int main() {
             if ((ready & POLLERR) || conn->want_close) {
                 (void)close(conn->fd);
                 fd2conn[conn->fd] = NULL;
+                free(conn->incoming->buffer_begin);
+                free(conn->outgoing->buffer_begin);
+                delete conn->incoming;
+                delete conn->outgoing;
                 delete conn;
             }
         }
