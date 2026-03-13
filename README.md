@@ -15,7 +15,7 @@ A custom binary protocol with length-prefixed framing. All integers are little-e
 **Request frame:**
 ```
 ┌──────────────┬──────────────┬──────────────────────────────────────┐
-│  len (4B)    │  nargs (4B)  │  [ arglen (4B) | arg (arglen B) ]…  │
+│  len (4B)    │  nargs (4B)  │  [ arglen (4B) | arg (arglen B) ]…   │
 └──────────────┴──────────────┴──────────────────────────────────────┘
 ```
 
