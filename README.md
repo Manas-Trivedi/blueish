@@ -108,4 +108,4 @@ server says: [0] redis-clone
 
 ## Blog
 
-Follow the development of blueis-h [here](https://dev.to/kettlesteam)
+Follow the development of blueis-h [here](https://dev.to/kettlesteam/series/35630)
