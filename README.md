@@ -49,6 +49,7 @@ This avoids per-message allocation while keeping memory usage bounded.
 The key-value store now uses a custom intrusive hash map from `hashtable.h/.cpp`.
 
 - Each record embeds an `HNode` directly in the owning object (`Entry`), avoiding extra node allocations.
+- Keys are hashed with MurmurHash3 (x86_32) before bucket lookup/insert/delete.
 - Buckets are separate-chaining linked lists (`HNode*` chains).
 - Bucket count is always a power of two, so indexing uses `hcode & mask`.
 - Resizing is incremental: the map keeps `newer` and `older` tables and migrates a bounded amount of work per operation (`k_rehashing_work`).

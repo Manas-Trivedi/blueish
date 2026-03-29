@@ -216,13 +216,62 @@ static bool entry_eq(HNode *lhs, HNode *rhs) {
     return le->key == re->key;
 }
 
-// FNV hash
-static uint64_t str_hash(const uint8_t *data, size_t len) {
-    uint32_t h = 0x811C9DC5;
-    for (size_t i = 0; i < len; i++) {
-        h = (h + data[i]) * 0x01000193;
-    }
+static inline uint32_t rotl32(uint32_t x, int r) {
+    return (x << r) | (x >> (32 - r));
+}
+
+static inline uint32_t fmix32(uint32_t h) {
+    h ^= h >> 16;
+    h *= 0x85ebca6b;
+    h ^= h >> 13;
+    h *= 0xc2b2ae35;
+    h ^= h >> 16;
     return h;
+}
+
+// MurmurHash3 (x86_32)
+static uint32_t str_hash(const uint8_t *data, size_t len) {
+    const uint32_t seed = 0;
+    const uint32_t c1 = 0xcc9e2d51;
+    const uint32_t c2 = 0x1b873593;
+
+    uint32_t h = seed;
+
+    size_t nblocks = len / 4;
+    for (size_t i = 0; i < nblocks; ++i) {
+        uint32_t k = 0;
+        memcpy(&k, data + i * 4, 4);
+
+        k *= c1;
+        k = rotl32(k, 15);
+        k *= c2;
+
+        h ^= k;
+        h = rotl32(h, 13);
+        h = h * 5 + 0xe6546b64;
+    }
+
+    const uint8_t *tail = data + nblocks * 4;
+    uint32_t k1 = 0;
+    switch (len & 3) {
+        case 3:
+            k1 ^= (uint32_t)tail[2] << 16;
+            [[fallthrough]];
+        case 2:
+            k1 ^= (uint32_t)tail[1] << 8;
+            [[fallthrough]];
+        case 1:
+            k1 ^= (uint32_t)tail[0];
+            k1 *= c1;
+            k1 = rotl32(k1, 15);
+            k1 *= c2;
+            h ^= k1;
+        default:
+            break;
+    }
+
+    h ^= (uint32_t)len;
+    return fmix32(h);
 }
 
 static void do_get(std::vector<std::string>& cmd, Response &out) {
