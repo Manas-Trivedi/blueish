@@ -44,6 +44,18 @@ On append, if there is insufficient space at the tail:
 
 This avoids per-message allocation while keeping memory usage bounded.
 
+## Hash Map Internals
+
+The key-value store now uses a custom intrusive hash map from `hashtable.h/.cpp`.
+
+- Each record embeds an `HNode` directly in the owning object (`Entry`), avoiding extra node allocations.
+- Buckets are separate-chaining linked lists (`HNode*` chains).
+- Bucket count is always a power of two, so indexing uses `hcode & mask`.
+- Resizing is incremental: the map keeps `newer` and `older` tables and migrates a bounded amount of work per operation (`k_rehashing_work`).
+- Lookups and deletes check both tables while migration is in progress.
+
+This mirrors Redis-style progressive rehashing behavior and avoids long pause times from full-table rehashes.
+
 ## Supported Commands
 
 | Command          | Description                              | Response status |
@@ -52,12 +64,12 @@ This avoids per-message allocation while keeping memory usage bounded.
 | `SET <key> <val>`| Insert or overwrite a key-value pair     | OK              |
 | `DEL <key>`      | Delete a key                             | OK              |
 
-The backing store is currently `std::map<std::string, std::string>` — a placeholder to be replaced with custom hash-map and sorted-set implementations.
+The backing store is an intrusive hash map (`HMap`) with incremental rehashing.
 
 ## Building
 
 ```bash
-g++ -o build/server server.cpp -Wall -Wextra -O2
+g++ -o build/server server.cpp hashtable.cpp -Wall -Wextra -O2
 g++ -o build/client client.cpp -Wall -Wextra -O2
 ```
 
@@ -89,8 +101,10 @@ server says: [0] redis-clone
 
 ```
 .
-├── server.cpp   # event loop, buffer management, protocol parser, KV store
-├── client.cpp   # protocol encoder, interactive REPL, single-shot mode
+├── server.cpp      # event loop, protocol parser, KV commands
+├── hashtable.h     # intrusive hash table interfaces (HNode/HTab/HMap)
+├── hashtable.cpp   # hash table implementation + incremental rehashing
+├── client.cpp      # protocol encoder, interactive REPL, single-shot mode
 └── build/
     ├── server
     └── client
@@ -99,7 +113,7 @@ server says: [0] redis-clone
 ## Roadmap
 
 - [x] Implement custom buffer arithmetic to replace stl uint8_t vectors
-- [ ] Replace `std::map` with a custom open-addressing hash map
+- [x] Replace `std::map` with a custom intrusive hash map
 - [ ] Sorted sets backed by a skip list or AVL tree
 - [ ] TTL / key expiry
 - [ ] AOF / RDB persistence
