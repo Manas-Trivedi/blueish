@@ -1,5 +1,5 @@
 # include <assert.h>
-# include <stdlib.h
+# include <stdlib.h>
 # include "hashtable.h"
 
 void h_init(HTab *htab, size_t n) {
@@ -42,7 +42,7 @@ const size_t k_rehashing_work = 128; // constant work per op
 
 static void hm_help_rehashing(HMap *hmap) {
     size_t nwork = 0;
-    while(nwork < k && hmap->older.size > 0) {
+    while(nwork < k_rehashing_work && hmap->older.size > 0) {
         // find a bucket with at least one HNode
         HNode **from = &hmap->older.tab[hmap->migrate_pos];
         if(!*from) {
@@ -79,16 +79,16 @@ const size_t max_load_factor = 8;
 
 void hm_insert(HMap *hmap, HNode *node) {
     if(!hmap->newer.tab) {
-        h_init(&hmap->newer.tab, 4);
+        h_init(&hmap->newer, 4);
     }
 
-    h_insert(hmap->newer, node);
+    h_insert(&hmap->newer, node);
 
     //check if we need to rehash incase one isn't already happening
     if(!hmap->older.tab) {
-        size_t threshold = (hmap->newer.mask + 1) * k_max_load_factor;
+        size_t threshold = (hmap->newer.mask + 1) * max_load_factor;
         if (hmap->newer.size >= threshold) {
-            hm_trigger_rehashing(hmap);
+            hm_trigger_rehash(hmap);
         }
     }
 
