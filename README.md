@@ -69,9 +69,24 @@ The backing store is an intrusive hash map (`HMap`) with incremental rehashing.
 
 ## Building
 
+Using the provided Makefile:
+
 ```bash
-g++ -o build/server server.cpp hashtable.cpp -Wall -Wextra -O2
-g++ -o build/client client.cpp -Wall -Wextra -O2
+make
+```
+
+Or compile manually:
+
+```bash
+cd src
+g++ -o ../build/server server.cpp hashtable.cpp protocol.cpp connection.cpp kvstore.cpp buffer.cpp -Wall -Wextra -O2
+g++ -o ../build/client client.cpp -Wall -Wextra -O2
+```
+
+Clean build artifacts:
+
+```bash
+make clean
 ```
 
 ## Usage
@@ -102,13 +117,21 @@ server says: [0] redis-clone
 
 ```
 .
-├── server.cpp      # event loop, protocol parser, KV commands
-├── hashtable.h     # intrusive hash table interfaces (HNode/HTab/HMap)
-├── hashtable.cpp   # hash table implementation + incremental rehashing
-├── client.cpp      # protocol encoder, interactive REPL, single-shot mode
-└── build/
-    ├── server
-    └── client
+├── src/
+│   ├── server.cpp          # event loop, connection handling
+│   ├── client.cpp          # protocol encoder, interactive REPL, single-shot mode
+│   ├── connection.h/.cpp   # connection state machine (Conn struct + handlers)
+│   ├── protocol.h/.cpp     # request/response parsing and encoding
+│   ├── kvstore.h/.cpp      # GET/SET/DEL command logic, Entry struct, hashing
+│   ├── buffer.h/.cpp       # sliding window buffer, append & consume
+│   ├── hashtable.h/.cpp    # intrusive hash map with incremental rehashing
+├── tests/                  # unit and integration tests (placeholder)
+├── metrics/                # benchmarking and profiling tools (placeholder)
+├── build/
+│   ├── server
+│   └── client
+├── Makefile
+└── README.md
 ```
 
 ## Roadmap
