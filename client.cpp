@@ -58,7 +58,72 @@ static int32_t write_all(int fd, const char *buf, size_t n) {
 // Protocol Helpers
 // =================
 
+enum {
+    TAG_NIL = 0,
+    TAG_ERR = 1,
+    TAG_STR = 2,
+    TAG_INT = 3,
+    TAG_DBL = 4,
+    TAG_ARR = 5,
+};
+
 const size_t k_max_msg = 4096;
+
+static void print_response(const uint8_t *&cur, const uint8_t *end) {
+    if (cur >= end) return;
+
+    uint8_t tag = *cur++;
+
+    switch (tag) {
+        case TAG_NIL:
+            printf("(nil)");
+            break;
+
+        case TAG_STR: {
+            if (cur + 4 > end) return;
+            uint32_t len = 0;
+            memcpy(&len, cur, 4);
+            cur += 4;
+
+            if (cur + len > end) return;
+            printf("%.*s", (int)len, cur);
+            cur += len;
+            break;
+        }
+
+        case TAG_INT: {
+            if (cur + 8 > end) return;
+            int64_t val = 0;
+            memcpy(&val, cur, 8);
+            cur += 8;
+
+            printf("%lld", (long long)val);
+            break;
+        }
+
+        case TAG_ARR: {
+            if (cur + 4 > end) return;
+            uint32_t n = 0;
+            memcpy(&n, cur, 4);
+            cur += 4;
+
+            printf("[");
+            for (uint32_t i = 0; i < n; i++) {
+                if (i) printf(", ");
+                print_response(cur, end);
+            }
+            printf("]");
+            break;
+        }
+
+        case TAG_ERR:
+            printf("(error)");
+            break;
+
+        default:
+            printf("(unknown type %u)", tag);
+    }
+}
 
 static int32_t send_req(int fd, const std::vector<std::string> &cmd) {
     uint32_t len = 4;
@@ -113,14 +178,10 @@ static int32_t read_res(int fd) {
         return err;
     }
 
-    if (len < 4) {
-        msg("bad response");
-        return -1;
-    }
-
-    uint32_t rescode = 0;
-    memcpy(&rescode, &rbuf[4], 4);
-    printf("server says: [%u] %.*s\n", rescode, (int)(len - 4), &rbuf[8]);
+    const uint8_t *cur = (uint8_t*)&rbuf[4];
+    const uint8_t *end = cur + len;
+    print_response(cur, end);
+    printf("\n");
     return 0;
 }
 
@@ -184,6 +245,11 @@ static bool parse_manual_line(const std::string &line, std::vector<std::string> 
     if (op == "help" || op == "exit" || op == "quit") {
         cmd[0] = op;
         cmd.resize(1);
+        return true;
+    }
+
+    if (op == "keys" && cmd.size() == 1) {
+        cmd[0] = op;
         return true;
     }
 

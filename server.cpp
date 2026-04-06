@@ -59,13 +59,6 @@ const size_t k_max_msg = 32 << 20;
 
 const size_t k_max_args = 200 * 1000;
 
-// Response status codes
-enum ResponseStatus {
-    RES_OK = 0,
-    RES_ERR = 1,
-    RES_NX = 2,
-};
-
 // =================
 // Buffer Helpers
 // =================
@@ -132,6 +125,15 @@ static void buf_consume(struct Buffer *buf, size_t n) {
 // Protocol
 // ===========
 
+enum {
+    TAG_NIL = 0,
+    TAG_ERR = 1,
+    TAG_STR = 2,
+    TAG_INT = 3,
+    TAG_DBL = 4,
+    TAG_ARR = 5,
+};
+
 static bool read_u32(const uint8_t *&cur, const uint8_t *end, uint32_t &out) {
     if(cur + 4 > end) {
         return false;
@@ -183,16 +185,41 @@ static int32_t parse_request(const uint8_t *data, size_t size, std::vector<std::
     return 0;
 }
 
-struct Response {
-    uint32_t status = 0;
-    std::vector<uint8_t> data;
-};
+static void out_nil(Buffer &out) {
+    uint8_t tag = TAG_NIL;
+    buf_append(&out, &tag, sizeof(tag));
+}
 
-static void make_response(const Response &resp, struct Buffer *out) {
-    uint32_t resp_len = 4 + (uint32_t)resp.data.size();
-    buf_append(out, (const uint8_t *)&resp_len, 4);
-    buf_append(out, (const uint8_t *)&resp.status, 4);
-    buf_append(out, resp.data.data(), resp.data.size());
+static void out_str(Buffer &out, const char *s, size_t size) {
+    uint8_t tag = TAG_STR;
+    buf_append(&out, &tag, sizeof(tag));
+
+    uint32_t len = (uint32_t)size;
+    buf_append(&out, (uint8_t*)&len, sizeof(len));
+
+    buf_append(&out, (const uint8_t *)s, size);
+}
+
+static void out_int(Buffer &out, int64_t val) {
+    uint8_t tag = TAG_INT;
+    buf_append(&out, &tag, sizeof(tag));
+
+    buf_append(&out, (uint8_t*)&val, sizeof(val)); // 8 bytes
+}
+
+static void out_arr(Buffer &out, uint32_t n) {
+    uint8_t tag = TAG_ARR;
+    buf_append(&out, &tag, sizeof(tag));
+
+    buf_append(&out, (uint8_t*)&n, sizeof(n));
+}
+
+static void out_err(Buffer &out) {
+    uint8_t tag = TAG_ERR;
+    buf_append(&out, &tag, 1);
+
+    uint32_t len = 0;
+    buf_append(&out, (uint8_t*)&len, 4);
 }
 
 // =====================
@@ -200,7 +227,6 @@ static void make_response(const Response &resp, struct Buffer *out) {
 // =====================
 
 static struct {
-    uint32_t status = 0;
     HMap db;
 } g_data;
 
@@ -274,22 +300,34 @@ static uint32_t str_hash(const uint8_t *data, size_t len) {
     return fmix32(h);
 }
 
-static void do_get(std::vector<std::string>& cmd, Response &out) {
+static bool cb_keys(HNode *node, void *arg) {
+    Buffer &out = *(Buffer *)arg;
+    const std::string &key = container_of(node, Entry, node)->key;
+    out_str(out, key.data(), key.size());
+    return true;
+}
+
+static void do_keys(std::vector<std::string> &, Buffer &out) {
+    out_arr(out, (uint32_t)hm_size(&g_data.db));
+    hm_foreach(&g_data.db, &cb_keys, (void *)&out);
+}
+
+static void do_get(std::vector<std::string>& cmd, Buffer &out) {
     Entry key;
     key.key.swap(cmd[1]);
     key.node.hcode = str_hash((uint8_t *) key.key.data(), key.key.size());
     // query the table
     HNode *node = hm_lookup(&g_data.db, &key.node, &entry_eq);
     if(!node) {
-        out.status = RES_NX;
+        out_nil(out);
         return;
     }
     std::string &val = container_of(node, Entry, node)->val;
     assert(val.size() < k_max_msg);
-    out.data.assign(val.begin(), val.end());
+    return out_str(out, val.data(), val.size());
 }
 
-static void do_set(std::vector<std::string> &cmd, Response &) {
+static void do_set(std::vector<std::string> &cmd, Buffer &out) {
     // a dummy `Entry` just for the lookup
     Entry key;
     key.key.swap(cmd[1]);
@@ -306,28 +344,34 @@ static void do_set(std::vector<std::string> &cmd, Response &) {
         ent->val.swap(cmd[2]);
         hm_insert(&g_data.db, &ent->node);
     }
+    return out_nil(out);
 }
 
-static void do_del(std::vector<std::string> &cmd, Response &) {
+static void do_del(std::vector<std::string> &cmd, Buffer &out) {
+    bool flag = 0;
     Entry key;
     key.key.swap(cmd[1]);
     key.node.hcode = str_hash((uint8_t *)key.key.data(), key.key.size());
     HNode *node = hm_delete(&g_data.db, &key.node, &entry_eq);
     if (node) {
+        flag = true;
         delete container_of(node, Entry, node);
     }
+    return out_int(out, flag ? 1 : 0);
 }
 
 
-static void do_request(std::vector<std::string> &cmd, Response &out) {
+static void do_request(std::vector<std::string> &cmd, Buffer &out) {
     if (cmd.size() == 2 && cmd[0] == "get") {
         return do_get(cmd, out);
     } else if (cmd.size() == 3 && cmd[0] == "set") {
         return do_set(cmd, out);
     } else if (cmd.size() == 2 && cmd[0] == "del") {
         return do_del(cmd, out);
+    } else if (cmd.size() == 1 && cmd[0] == "keys") {
+        return do_keys(cmd, out);
     } else {
-        out.status = RES_ERR;
+        out_err(out);
     }
 }
 
@@ -336,7 +380,7 @@ static void do_request(std::vector<std::string> &cmd, Response &out) {
 // ======================
 
 struct Conn {
-int fd = -1;
+    int fd = -1;
     // intention for event loop
     bool want_read = false;
     bool want_write = false;
@@ -345,6 +389,25 @@ int fd = -1;
     struct Buffer *incoming;
     struct Buffer *outgoing;
 };
+
+static void response_begin(Buffer &out, size_t *header) {
+    *header = out.data_end - out.buffer_begin;
+
+    uint32_t zero = 0;
+    buf_append(&out, (uint8_t*) &zero, 4);
+}
+
+static size_t response_size(Buffer &out, size_t header) {
+    return (out.data_end - out.buffer_begin) - header - 4;
+}
+
+static void response_end(Buffer &out, size_t header) {
+    size_t msg_size = response_size(out, header);
+
+    uint32_t len = (uint32_t)msg_size;
+
+    memcpy(out.buffer_begin + header, &len, 4);
+}
 
 static Conn* handle_accept(int fd) {
     struct sockaddr_in client_addr = {};
@@ -405,9 +468,10 @@ static bool try_one_request(Conn* conn) {
         return false;
     }
 
-    Response resp;
-    do_request(cmd, resp);
-    make_response(resp, conn->outgoing);
+    size_t header_pos = 0;
+    response_begin(*conn->outgoing, &header_pos);
+    do_request(cmd, *conn->outgoing);
+    response_end(*conn->outgoing, header_pos);
 
     // consume the processed request frame: 4-byte len header + body
     buf_consume(conn->incoming, 4 + len);
