@@ -68,6 +68,7 @@ static void hm_help_rehashing(HMap *hmap) {
         if(!*from) {
             hmap->migrate_pos++;
             nwork++;
+            continue;
         }
         h_insert(&hmap->newer, h_detach(&hmap->older, from));
         nwork++;
