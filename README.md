@@ -72,6 +72,7 @@ The backing store is an intrusive hash map (`HMap`) with incremental rehashing.
 ```bash
 g++ -o build/server server.cpp hashtable.cpp -Wall -Wextra -O2
 g++ -o build/client client.cpp -Wall -Wextra -O2
+g++ -o build/benchmark benchmark.cpp -Wall -Wextra -O2 -pthread
 ```
 
 ## Usage
@@ -98,6 +99,29 @@ server says: [0] redis-clone
 ./build/client del name
 ```
 
+**Benchmark mode:**
+```bash
+./build/benchmark --server-cmd "./build/server"
+```
+
+Example with a larger run and optional Redis comparison:
+```bash
+./build/benchmark \
+  --server-cmd "./build/server" \
+  --connections 64 \
+  --requests 100000 \
+  --key-count 20000 \
+  --value-size 128 \
+  --compare-redis
+```
+
+The benchmark reports:
+- Throughput in ops/sec for `SET insert`, `SET overwrite`, `GET hit`, and `DEL hit`
+- Average latency plus `p50`, `p95`, `p99`, min, and max latency in microseconds
+- Error counts per phase
+- A README-ready summary line such as `Achieved ~X us average GET latency under Y concurrent connections; peak measured throughput reached ~Z ops/sec.`
+- Optional Redis `SET`/`GET` ops/sec comparison via `redis-benchmark`
+
 ## Project Structure
 
 ```
@@ -106,9 +130,11 @@ server says: [0] redis-clone
 ├── hashtable.h     # intrusive hash table interfaces (HNode/HTab/HMap)
 ├── hashtable.cpp   # hash table implementation + incremental rehashing
 ├── client.cpp      # protocol encoder, interactive REPL, single-shot mode
+├── benchmark.cpp   # concurrent benchmark runner + optional Redis comparison
 └── build/
     ├── server
-    └── client
+    ├── client
+    └── benchmark
 ```
 
 ## Roadmap
@@ -119,7 +145,7 @@ server says: [0] redis-clone
 - [ ] TTL / key expiry
 - [ ] AOF / RDB persistence
 - [ ] Pipelining support (multiple in-flight requests per connection)
-- [ ] Benchmarking suite
+- [x] Benchmarking suite
 
 ## Blog
 
